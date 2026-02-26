@@ -124,12 +124,12 @@ impl AncoreAccount {
             .unwrap_or(0))
     }
 
-    /// Execute a transaction
+    /// Execute a transaction: validate nonce, perform cross-contract call, increment nonce.
     ///
     /// # Security
-    /// - Must verify caller is owner or valid session key
-    /// - Must check and increment nonce
-    /// - Must validate signature
+    /// - Caller must be owner (session key auth not yet wired)
+    /// - `expected_nonce` must match current nonce (replay protection)
+    /// - Nonce is incremented only after a successful invocation
     pub fn execute(
         env: Env,
         to: Address,
@@ -382,5 +382,50 @@ mod test {
         let owner = Address::generate(&env);
         client.initialize(&owner);
         client.initialize(&owner); // Should panic with contract error #1
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid nonce")]
+    fn test_execute_rejects_invalid_nonce() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AncoreAccount);
+        let client = AncoreAccountClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        client.initialize(&owner);
+
+        env.mock_all_auths();
+
+        let to = Address::generate(&env);
+        let function = soroban_sdk::symbol_short!("transfer");
+        let args = Vec::new(&env);
+
+        // Current nonce is 0; passing expected_nonce = 1 should panic Invalid nonce
+        client.execute(&to, &function, &args, &1u64);
+    }
+
+    #[test]
+    fn test_execute_validates_nonce_then_increments() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AncoreAccount);
+        let client = AncoreAccountClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        client.initialize(&owner);
+
+        assert_eq!(client.get_nonce(), 0);
+
+        env.mock_all_auths();
+
+        // Deploy a trivial contract that returns a Val so we can invoke it
+        let callee_id = env.register_contract(None, AncoreAccount);
+        let to = callee_id;
+        let function = soroban_sdk::symbol_short!("get_nonce");
+        let args = Vec::new(&env);
+
+        // Execute with expected_nonce = 0 (matches current); invokes get_nonce on callee
+        let _result = client.execute(&to, &function, &args, &0u64);
+
+        assert_eq!(client.get_nonce(), 1);
     }
 }
