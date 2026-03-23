@@ -53,3 +53,6 @@ temp/
 *.key
 *.pem
 secrets/
+
+# issues
+docs/issues
