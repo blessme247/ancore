@@ -88,6 +88,13 @@ mod events {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CallerIdentity {
+    Owner,
+    SessionKey(BytesN<32>),
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct SessionKey {
     pub public_key: BytesN<32>,
@@ -164,6 +171,7 @@ impl AncoreAccount {
     /// - Nonce is incremented before invocation (checks-effects-interactions)
     pub fn execute(
         env: Env,
+        caller: CallerIdentity,
         to: Address,
         function: soroban_sdk::Symbol,
         args: Vec<Val>,
@@ -357,7 +365,28 @@ impl AncoreAccount {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Events}, Address, Env};
+    use soroban_sdk::{testutils::{Address as _, Events}, Address, Env, Bytes, xdr::ToXdr};
+    use ed25519_dalek::{SigningKey, Signer};
+    use rand::rngs::OsRng;
+
+    fn sign_payload(
+        env: &Env,
+        signing_key: &SigningKey,
+        to: &Address,
+        function: &soroban_sdk::Symbol,
+        args: &Vec<Val>,
+        nonce: u64,
+    ) -> BytesN<64> {
+        let mut payload = Bytes::new(env);
+        payload.append(&to.clone().to_xdr(env));
+        payload.append(&function.clone().to_xdr(env));
+        payload.append(&args.clone().to_xdr(env));
+        payload.append(&nonce.to_xdr(env));
+
+        let msg_hash = env.crypto().sha256(&payload);
+        let signature = signing_key.sign(&msg_hash.to_array());
+        BytesN::from_array(env, &signature.to_bytes())
+    }
 
     #[test]
     fn test_initialize() {
@@ -615,7 +644,38 @@ mod test {
 
         let owner = Address::generate(&env);
         client.initialize(&owner);
+        env.mock_all_auths();
 
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+        let session_pk = BytesN::from_array(&env, &signing_key.verifying_key().to_bytes());
+
+        let expires_at = env.ledger().timestamp() + 10000;
+        let mut permissions = Vec::new(&env);
+        permissions.push_back(1); // PERMISSION_EXECUTE
+
+        client.add_session_key(&session_pk, &expires_at, &permissions);
+
+        let callee_id = env.register_contract(None, AncoreAccount);
+        let function = soroban_sdk::symbol_short!("get_nonce");
+        let args = Vec::new(&env);
+
+        let sig = sign_payload(&env, &signing_key, &callee_id, &function, &args, 0);
+
+        let result = client.execute(&CallerIdentity::SessionKey(session_pk), &callee_id, &function, &args, &0u64, &Some(sig));
+        let result_u64: u64 = soroban_sdk::FromVal::from_val(&env, &result);
+        assert_eq!(result_u64, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #6)")]
+    fn test_execute_session_key_expired() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AncoreAccount);
+        let client = AncoreAccountClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        client.initialize(&owner);
         env.mock_all_auths();
 
         // Register a callee that returns something predictable
