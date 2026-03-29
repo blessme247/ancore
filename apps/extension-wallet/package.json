@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ancore/core-sdk": "workspace:*",
+    "@ancore/stellar": "workspace:*",
     "@ancore/types": "workspace:*",
     "@ancore/ui-kit": "workspace:*",
     "date-fns": "^4.1.0",
