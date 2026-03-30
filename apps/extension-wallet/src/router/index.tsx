@@ -1,38 +1,20 @@
-import { useMemo, useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
+import { useAccountStore } from '../stores/account';
+import { useSessionStore, type AppRoute } from '../stores/session';
+import { useSettingsStore } from '../stores/settings';
 import { HelpCenter } from '../components/HelpCenter';
 import helpContent from '../data/help-content.json';
-import { getAccountState, initializeAccountStore, useAccountStore } from '../stores/account';
-import { setSessionState, useSessionStore, type AppRoute } from '../stores/session';
-import { initializeSettingsStore, useSettingsStore } from '../stores/settings';
 
-const routes: Array<{ id: AppRoute; label: string; description: string; tooltip: string }> = [
-  {
-    id: 'home',
-    label: 'Home',
-    description: 'Wallet overview, balances, and quick actions will land here.',
-    tooltip: helpContent.tooltips.receive,
-  },
-  {
-    id: 'accounts',
-    label: 'Accounts',
-    description: 'Account selection, creation, and import flows will live here.',
-    tooltip: helpContent.tooltips.send,
-  },
-  {
-    id: 'settings',
-    label: 'Settings',
-    description: 'Network, theme, and extension preferences will live here.',
-    tooltip: helpContent.tooltips.security,
-  },
-];
-
-function navigate(route: AppRoute) {
-  setSessionState((current) => ({
-    ...current,
-    currentRoute: route,
-    lastActiveAt: Date.now(),
-  }));
-}
+// Lazy-loaded screens
+const HomeScreen = lazy(() => import('../screens/HomeScreen'));
+const ReceiveScreen = lazy(() => import('../screens/ReceiveScreen'));
+const UnlockScreen = lazy(() => import('../screens/UnlockScreen'));
+const TransactionDetail = lazy(() => import('../screens/TransactionDetail'));
+const OnboardingFlow = lazy(() => import('../screens/Onboarding/OnboardingFlow'));
+const SendScreen = lazy(() => import('../screens/Send/SendScreen'));
+const SettingsScreen = lazy(() =>
+  import('../screens/Settings/AboutScreen').then((m) => ({ default: m.AboutScreen }))
+);
 
 function Tooltip({ text }: { text: string }): JSX.Element {
   return (
@@ -46,22 +28,50 @@ function Tooltip({ text }: { text: string }): JSX.Element {
 }
 
 export function RouterShell(): JSX.Element {
-  initializeAccountStore();
-  initializeSettingsStore();
-
-  const [helpCenterOpen, setHelpCenterOpen] = useState(false);
+  const accounts = useAccountStore((s) => s.accounts);
+  const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const account = useAccountStore();
   const session = useSessionStore();
   const settings = useSettingsStore();
+  const [helpCenterOpen, setHelpCenterOpen] = useState(false);
 
-  const activeRoute = useMemo(
-    () => routes.find((route) => route.id === session.currentRoute) ?? routes[0],
-    [session.currentRoute]
-  );
+  const activeAccount = accounts.find((a) => a.id === activeAccountId);
 
-  const activeAccount = getAccountState().accounts.find(
-    (entry) => entry.id === account.activeAccountId
-  );
+  const routes: Array<{ id: AppRoute; label: string; description: string; tooltip: string }> = [
+    {
+      id: 'home',
+      label: 'Home',
+      description: 'Wallet overview and quick actions.',
+      tooltip: helpContent.tooltips.receive,
+    },
+    {
+      id: 'accounts',
+      label: 'Accounts',
+      description: 'Account selection and import.',
+      tooltip: helpContent.tooltips.send,
+    },
+    {
+      id: 'settings',
+      label: 'Settings',
+      description: 'Network, theme, and preferences.',
+      tooltip: helpContent.tooltips.security,
+    },
+  ];
+
+  const activeRoute = routes.find((r) => r.id === session.currentRoute) ?? routes[0];
+
+  const renderActiveScreen = () => {
+    switch (session.currentRoute) {
+      case 'home':
+        return <HomeScreen />;
+      case 'settings':
+        return <SettingsScreen />;
+      case 'accounts':
+        return <HomeScreen />; // fallback
+      default:
+        return <HomeScreen />;
+    }
+  };
 
   return (
     <>
@@ -89,13 +99,12 @@ export function RouterShell(): JSX.Element {
           <div className="mt-5 grid grid-cols-3 gap-2">
             {routes.map((route) => {
               const isActive = route.id === activeRoute.id;
-
               return (
                 <button
                   key={route.id}
                   type="button"
                   title={route.tooltip}
-                  onClick={() => navigate(route.id)}
+                  onClick={() => session.navigate(route.id)}
                   className={[
                     'rounded-2xl px-3 py-2 text-sm transition',
                     isActive
@@ -140,13 +149,21 @@ export function RouterShell(): JSX.Element {
             </article>
           </section>
 
+          {/* Suspense for lazy-loaded screens */}
+          <Suspense
+            fallback={<div className="p-8 text-center text-cyan-400 animate-pulse">Loading...</div>}
+          >
+            {renderActiveScreen()}
+          </Suspense>
+
           <section className="rounded-3xl border border-dashed border-cyan-400/30 bg-cyan-400/5 p-4 text-sm leading-6 text-cyan-50/90">
-            This scaffold wires manifest, popup, background worker, navigation, and initial stores.
-            Feature-specific screens can now replace these placeholders incrementally.
+            Zustand stores wired with extension storage persistence. Auto-lock and session management
+            active. Feature-specific screens can replace these placeholders incrementally.
           </section>
         </main>
       </div>
 
+      {/* Help Center Modal */}
       <HelpCenter open={helpCenterOpen} onClose={() => setHelpCenterOpen(false)} />
     </>
   );
