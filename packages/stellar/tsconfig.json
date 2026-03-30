@@ -2,7 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "moduleResolution": "node",
+    "composite": false,
+    "types": ["node", "jest"]
   },
   "references": [
     { "path": "../types" }
